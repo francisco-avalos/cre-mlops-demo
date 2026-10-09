@@ -66,7 +66,26 @@ jobs:
         run: docker build -t cre-risk-api:${{ github.sha }} .
       - name: Verify image starts
         run: |
-          docker run -d --name smoke -p 8000:8000 cre-risk-api:${{ github.sha }}
-          sleep 12
-          curl -fsS http://localhost:8000/health || (docker logs smoke && exit 1)
+          # Override the compose-oriented tracking URI: there is no `mlflow`
+          # service in CI, and pointing at an unresolvable host makes the
+          # client retry and stall startup. A local file store keeps the
+          # smoke test about "does the image boot and serve?".
+          docker run -d --name smoke -p 8000:8000 \
+            -e MLFLOW_TRACKING_URI=file:///tmp/mlruns \
+            cre-risk-api:${{ github.sha }}
+
+          # Poll instead of a fixed sleep -- image startup time varies.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then
+              echo ""
+              echo "API healthy after ~$((i*2))s"
+              docker rm -f smoke
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "API did not become healthy within 60s"
+          docker logs smoke
           docker rm -f smoke
+          exit 1
