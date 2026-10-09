@@ -1,0 +1,16 @@
+mlruns/
+mlartifacts/
+mlflow-store/
+data/*.csv
+*.json
+*.csv
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+.DS_Store
+mlflow.db
+
+.DS_Store
+mlflow.db

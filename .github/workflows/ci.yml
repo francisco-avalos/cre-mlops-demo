@@ -1,0 +1,72 @@
+name: CI
+
+# Git-based CI/CD with automated testing for a data-science repo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Generate data
+        run: python data/generate_data.py
+
+      - name: Train + register model
+        run: python src/train.py
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Drift & governance checks
+        run: python src/monitor.py
+
+      # Gate: fail the build if the champion no longer beats the explainable
+      # baseline. A model that can't justify its complexity shouldn't ship.
+      - name: Quality gate
+        run: |
+          python - <<'PY'
+          import json, sys
+          s = json.load(open("training_summary.json"))
+          print("summary:", json.dumps(s, indent=2))
+          if s["metrics"]["pr_auc"] < s["baseline_pr_auc"]:
+              sys.exit("FAIL: champion does not beat the explainable baseline")
+          print("PASS: champion beats baseline by "
+                f"{s['lift_over_baseline_pct']}%")
+          PY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            training_summary.json
+            monitoring_report.json
+            drift_report.csv
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t cre-risk-api:${{ github.sha }} .
+      - name: Verify image starts
+        run: |
+          docker run -d --name smoke -p 8000:8000 cre-risk-api:${{ github.sha }}
+          sleep 12
+          curl -fsS http://localhost:8000/health || (docker logs smoke && exit 1)
+          docker rm -f smoke
