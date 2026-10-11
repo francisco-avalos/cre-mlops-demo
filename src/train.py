@@ -27,6 +27,7 @@ from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -143,6 +144,14 @@ def run_experiment(data_path: str = "data/reference.csv") -> dict:
             min_child_weight=3, gamma=0.1,
             scale_pos_weight=pos_weight, eval_metric="logloss",
             tree_method="hist", random_state=42,
+        ),
+        "random_forest": RandomForestClassifier(
+            class_weight="balanced_subsample", random_state=42,
+            n_estimators=100, max_depth=10
+        ),
+        "random_forest_tuned": RandomForestClassifier(
+            class_weight="balanced_subsample", random_state=42,
+            n_estimators=400, max_depth=25
         ),
     }
 
