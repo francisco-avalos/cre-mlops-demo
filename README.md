@@ -10,17 +10,25 @@ Built to close a specific gap: I have owned the *substance* of the model lifecyc
 
 **The domain is deliberate.** Structured/tabular financial data — LTV, DSCR, occupancy, cap rate, sponsor experience — is where gradient-boosted trees earn their keep, and it mirrors how a real-estate lender actually underwrites.
 
-**The modeling discipline is deliberate too.** An explainable logistic-regression baseline is fit *first*. The gradient-boosted model only ships if it beats that baseline, and CI fails the build if it doesn't. Complexity has to be earned.
+**The modeling discipline is deliberate too.** An explainable logistic-regression baseline is fit *first*. A more complex model only ships if it beats that baseline, and CI fails the build if it doesn't. Complexity has to be earned.
 
-Current result on the held-out set:
+Current result on the held-out set — five candidates, bagging and boosting tested against the baseline:
 
 | model | ROC-AUC | PR-AUC | Brier |
 |---|---|---|---|
-| `logreg_baseline` (explainable) | 0.718 | 0.267 | 0.201 |
-| **`xgb_shallow`** (depth 3) — *champion* | **0.724** | **0.276** | 0.167 |
-| `xgb_tuned` (depth 5) | 0.695 | 0.258 | 0.119 |
+| `logreg_baseline` (explainable) | 0.7184 | 0.2670 | 0.2014 |
+| **`xgb_shallow`** (depth 3) — *champion* | **0.7232** | **0.2797** | 0.1670 |
+| `xgb_tuned` (depth 5) | 0.6934 | 0.2591 | 0.1201 |
+| `random_forest` (100 trees, depth 10) | 0.7129 | 0.2548 | 0.1285 |
+| `random_forest_tuned` (400 trees, depth 25) | 0.7197 | 0.2654 | 0.0759 |
 
-The shallow boosted model beats the baseline by **+3.5% PR-AUC**. The *deeper* model is worse — it overfits a rare-event target (~9% default rate). That's the whole argument for starting simple.
+The shallow boosted model wins, beating the baseline by **+4.76% PR-AUC**. Three findings matter more than the ranking itself.
+
+**Deeper boosting hurt.** `xgb_tuned` at depth 5 is the worst ranker of the five. On a rare-event target (~9% default rate), the extra capacity overfits. That is the argument for starting simple, stated as a measurement rather than an opinion.
+
+**Neither random forest beat the explainable baseline on PR-AUC** — 0.2548 and 0.2654 against the baseline's 0.2670. Bagging reduces variance but does not chase residual structure the way boosting does, and here that mattered. A 400-tree forest is a far more expensive model than a logistic regression it fails to outrank, so by this repo's own shipping rule it does not ship. Note also that extra capacity *helped* the forest while it hurt the booster: independently grown trees average their errors out, sequentially fitted ones compound them.
+
+**The metrics disagree, which is the most useful finding here.** `random_forest_tuned` has the best Brier score of all five (0.0759, against the champion's 0.1670) while ranking worse. Brier measures calibration; PR-AUC measures ranking. Averaging over 400 trees produces better-calibrated probabilities here, while the booster's weighted objective and the baseline's `class_weight="balanced"` both push scores away from true rates to handle the class imbalance. So the right champion depends on the decision: to *rank* loans for review, take the booster; to feed a probability into an expected-loss calculation, the forest's calibration may be worth more than its ranking. This registry promotes on PR-AUC, which is a choice worth making explicitly rather than by default.
 
 ---
 
