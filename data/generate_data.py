@@ -72,9 +72,12 @@ def _simulate(n: int, rng: np.random.Generator, stressed: bool = False) -> pd.Da
         # Threshold effect: breaching 75% LTV is a cliff, not a slope.
         + 2.10 * (df["ltv"] - 0.65)
         + 1.55 * np.maximum(df["ltv"] - 0.75, 0) * 10
-        # DSCR below ~1.2 is where lenders actually start losing money.
+        # DSCR below ~1.2 is where lenders actually start losing money:
+        # an extra penalty that grows as coverage falls under the covenant.
+        # (This term was "- 2.40" in an earlier version -- a sign error that made
+        # low DSCR *reduce* risk. SHAP dependence plots caught it.)
         - 1.20 * (df["dscr"] - 1.35)
-        - 2.40 * np.maximum(1.20 - df["dscr"], 0)
+        + 2.40 * np.maximum(1.20 - df["dscr"], 0)
         - 2.20 * (df["occupancy_rate"] - 0.90)
         + 0.22 * (df["interest_rate"] - 5.5)
         + 2.60 * (df["market_vacancy"] - 0.08)

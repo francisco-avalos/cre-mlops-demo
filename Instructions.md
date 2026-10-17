@@ -71,12 +71,12 @@ python data/generate_data.py
 
 Expected output:
 ```
-reference.csv       (20000, 14)  default rate 0.091
+reference.csv       (20000, 14)  default rate 0.113
 current.csv         (6000, 13)  (unlabeled, drifted)
-current_labeled.csv (6000, 14)  default rate 0.306
+current_labeled.csv (6000, 14)  default rate 0.408
 ```
 
-Three CSVs now exist in `data/`. **The default rate jumping 9% → 31% is the drift you'll detect in Step 5.**
+Three CSVs now exist in `data/`. **The default rate jumping 11% → 41% is the drift you'll detect in Step 6.**
 
 ---
 
@@ -88,17 +88,19 @@ python src/train.py
 
 Expected output:
 ```
-logreg_baseline    AUC=0.7184  PR-AUC=0.2670  Brier=0.2014
-xgb_shallow        AUC=0.7241  PR-AUC=0.2764  Brier=0.1670
-xgb_tuned          AUC=0.6949  PR-AUC=0.2577  Brier=0.1189
+logreg_baseline    AUC=0.7399  PR-AUC=0.3255  Brier=0.1985
+xgb_shallow        AUC=0.7416  PR-AUC=0.3343  Brier=0.1693
+xgb_tuned          AUC=0.7239  PR-AUC=0.3097  Brier=0.1325
+random_forest      AUC=0.7377  PR-AUC=0.3143  Brier=0.1322
+random_forest_tuned AUC=0.7398  PR-AUC=0.3193  Brier=0.0887
 
-Winner: xgb_shallow  (PR-AUC 0.2764, +3.5% vs explainable baseline)
+Winner: xgb_shallow  (PR-AUC 0.3343, +2.7% vs explainable baseline)
 Registered cre-default-risk version 1
   alias @champion -> v1
   alias @serving -> v1
 ```
 
-What just happened: three models trained, each logged as an MLflow run with params/metrics/plots; the winner registered as `cre-default-risk` v1 and given the `@champion` alias.
+What just happened: five models trained, each logged as an MLflow run with params/metrics/plots; the winner registered as `cre-default-risk` v1 and given the `@champion` alias.
 
 A new `mlruns/` folder appeared — that's MLflow's local store.
 
@@ -115,9 +117,9 @@ mlflow ui
 Open **http://localhost:5000**. **Do not skip this step** — this is where MLflow stops being abstract.
 
 Walk through:
-1. **Experiments → `cre-default-risk`** — your three runs side by side.
-2. Click a run → **Parameters**, **Metrics**, **Artifacts** (ROC curve, feature-importance plot and CSV).
-3. Select all three → **Compare** — metrics charted against each other.
+1. **Experiments → `cre-default-risk`** — your five runs side by side.
+2. Click a run → **Parameters**, **Metrics**, **Artifacts** (ROC curve, feature-importance plot and CSV, SHAP beeswarm and dependence plots, `explainability/shap_summary.csv`).
+3. Select all five → **Compare** — metrics charted against each other.
 4. **Models** tab (top nav) → `cre-default-risk` → version 1, with `@champion` and `@serving` aliases and your tags.
 
 Spend ten minutes clicking around. Stop with `Ctrl+C`.
@@ -142,16 +144,16 @@ occupancy_rate   PSI 0.70  ALERT
 loan_amount      PSI 0.00  OK
 
 === CONCEPT DRIFT ===
-reference_roc_auc 0.8383 -> current_roc_auc 0.7245  (13.6% decay)  ALERT
+reference_roc_auc 0.8411 -> current_roc_auc 0.7866  (6.5% decay)  OK
 
 === RETRAINING DECISION ===
-retrain_required: true
+retrain_required: true   (reason: data drift PSI>=0.25 on six features)
 ```
 
 Three things to notice:
 - Six features alert; five stay OK. **A monitor that flags everything is useless.**
-- ROC-AUC decayed 13.6% → concept drift.
-- PR-AUC went *up* (0.43 → 0.56) while the model got worse, because the base rate tripled. **Watching the wrong metric would have told you it improved.**
+- ROC-AUC decayed 6.5%, under the 10% concept-drift bar. The retrain fires on **data drift** instead, before the labels confirm the damage.
+- PR-AUC went *up* (0.49 → 0.73) while the model got worse, because the base rate rose from 11% to 41%. **Watching the wrong metric would have told you it improved.**
 
 Writes `drift_report.csv`, `monitoring_report.json`, and a run in the `cre-default-risk-monitoring` experiment.
 
@@ -163,7 +165,7 @@ Writes `drift_report.csv`, `monitoring_report.json`, and a run in the `cre-defau
 pytest tests/ -v
 ```
 
-Expect **15 passed** (14 passed + 1 skipped if you haven't trained yet). These cover the drift math and the serving contract.
+Expect **20 passed** (19 passed + 1 skipped if you haven't trained yet). These cover the drift math, the serving contract, the generator's credit rules (including a regression test for the DSCR sign bug SHAP caught), and SHAP additivity.
 
 ---
 
@@ -308,25 +310,26 @@ Thirteen files. Each entry answers who, what, when, where, why, and how.
 
 | | |
 |---|---|
-| **What** | Trains three candidates, logs everything to MLflow, picks a winner, registers it, and aliases it for serving. |
+| **What** | Trains five candidates, logs everything to MLflow, picks a winner, registers it, and aliases it for serving. |
 | **Who** | You, or CI on every push. |
 | **When** | After data generation; re-run whenever a retraining trigger fires. |
 | **Where** | Reads `data/reference.csv`; writes to `mlruns/` and `training_summary.json`. |
 | **Why** | This is the heart of the MLflow demonstration — tracking, artifacts, and registry in one script. |
 | **How** | scikit-learn `Pipeline` (preprocessing + classifier) per candidate, wrapped in `mlflow.start_run()`. |
 
-**The three candidates and why:**
+**The five candidates and why:**
 - `logreg_baseline` — the explainable control. **Everything else must beat this.**
 - `xgb_shallow` — depth 3, regularized. Usually the right answer for tabular data.
 - `xgb_tuned` — depth 5, more trees. Included to *show* that more complexity can hurt — and it does.
+- `random_forest` / `random_forest_tuned` — bagging instead of boosting. Neither beats the baseline on PR-AUC, but the tuned forest has the best calibration (Brier).
 
-**What gets logged per run:** hyperparameters, metrics (ROC-AUC, PR-AUC, Brier), tags, a ROC-curve PNG, a feature-importance PNG + CSV, and the serialized model with an inferred signature.
+**What gets logged per run:** hyperparameters, metrics (ROC-AUC, PR-AUC, Brier), tags, a ROC-curve PNG, a feature-importance PNG + CSV (method named in the title), SHAP beeswarm and dependence plots plus `shap_summary.csv`, and the serialized model with an inferred signature.
 
-**Why three metrics:** ROC-AUC for ranking, **PR-AUC because the target is rare (~9%)**, and Brier for calibration — a credit model needs probabilities that *mean* something, not just correct ordering.
+**Why three metrics:** ROC-AUC for ranking, **PR-AUC because the target is rare (~11%)**, and Brier for calibration — a credit model needs probabilities that *mean* something, not just correct ordering.
 
-**Why `scale_pos_weight`:** with 9% positives, an unweighted model can score well by predicting "no default" constantly. This reweights so the rare class carries its weight.
+**Why `scale_pos_weight`:** with ~11% positives, an unweighted model can score well by predicting "no default" constantly. This reweights so the rare class carries its weight.
 
-**Selection and registry:** winner chosen by **PR-AUC** (not accuracy — accuracy is meaningless at a 9% base rate), registered as `cre-default-risk`, then given `@champion` and `@serving` aliases. **Aliases, not stages** — stages were deprecated in MLflow 2.9+.
+**Selection and registry:** winner chosen by **PR-AUC** (not accuracy — accuracy is meaningless at an 11% base rate), registered as `cre-default-risk`, then given `@champion` and `@serving` aliases. **Aliases, not stages** — stages were deprecated in MLflow 2.9+.
 
 **Why aliases matter:** the API asks for `models:/cre-default-risk@champion`. Promoting a new version repoints the alias and the API serves the new model **with no code change and no redeploy**. That's the single most useful thing the registry buys you.
 
@@ -363,7 +366,7 @@ p50/p95/p99 on single-row inference, the actual serving path. Batch timing hides
 Fires if **any** of: a feature with PSI ≥ 0.25, ROC-AUC decay ≥ 10%, or an ALERT-severity skew violation. Explicit rules, written down, with the reasons recorded. **A trigger nobody can state precisely is not a trigger.**
 
 ### The subtlety worth knowing
-On the stressed vintage PR-AUC *rises* (0.43 → 0.56) while ROC-AUC falls 13.6%. PR-AUC depends on class balance, and defaults tripled. **Monitoring PR-AUC alone would have reported an improvement on a model that got materially worse.**
+On the stressed vintage PR-AUC *rises* (0.49 → 0.73) while ROC-AUC falls 6.5%. PR-AUC depends on class balance, and the default rate rose from 11% to 41%. **Monitoring PR-AUC alone would have reported an improvement on a model that got materially worse.**
 
 ---
 
@@ -392,7 +395,7 @@ On the stressed vintage PR-AUC *rises* (0.43 → 0.56) while ROC-AUC falls 13.6%
 
 | | |
 |---|---|
-| **What** | 15 pytest tests covering the drift math and the serving contract. |
+| **What** | 20 pytest tests: drift math and serving contract (`test_api.py`), plus generator rules and SHAP additivity (`test_explainability.py`). |
 | **Who** | You locally; GitHub Actions on every push. |
 | **When** | Before every commit; automatically in CI. |
 | **Where** | `pytest tests/ -v`. |
@@ -464,7 +467,7 @@ On the stressed vintage PR-AUC *rises* (0.43 → 0.56) while ROC-AUC falls 13.6%
 
 **`requirements.txt`** — runtime dependencies only (MLflow, scikit-learn, XGBoost, pandas, NumPy, SciPy, matplotlib, FastAPI, uvicorn, Pydantic). Version *ranges*, not exact pins: tight enough to be reproducible, loose enough not to rot. This is what the Docker image installs — the container doesn't need pytest.
 
-**`requirements-dev.txt`** — `-r requirements.txt` plus pytest and httpx. The split keeps test tooling out of production images.
+**`requirements-dev.txt`** — `-r requirements.txt` plus pytest, httpx and shap. The split keeps test tooling out of production images.
 
 **`Makefile`** — short aliases for long commands (`make train`, `make monitor`, `make test`, `make up`, `make clean`). Self-documenting entry point: a new person can read it and know what the project *does*. (On Windows, run the underlying commands directly.)
 
